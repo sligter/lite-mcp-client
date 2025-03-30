@@ -1,0 +1,28 @@
+{
+    "mcp_servers": [
+      {
+        "name": "各平台热搜查询",
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["mcp-newsnow"],
+        "env": {},
+        "description": "热点话题查询"
+      },
+      {
+        "name": "Fetch",
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["mcp-server-fetch"],
+        "env": {},
+        "description": "访问指定链接"
+      },
+      {
+        "name": "其他服务",
+        "type": "sse",
+        "url": "http://localhost:3000/sse",
+        "headers": {},
+        "description": "其他服务描述"
+      }
+    ],
+    "default_server": ["各平台热搜查询", "Fetch"]
+}

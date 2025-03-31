@@ -32,7 +32,6 @@ Lite-MCP-Client是一个基于命令行的轻量级MCP客户端工具，可以�
 
 ```bash
 git clone https://github.com/sligter/lite-mcp-client.git
-cd mcp-client
 ```
 
 2. 安装依赖：

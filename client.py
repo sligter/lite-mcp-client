@@ -411,15 +411,15 @@ class GenericMCPClient:
         api_key = os.environ.get("OPENAI_API_KEY")
         provider = os.environ.get("PROVIDER", "openai")
         google_api_key = os.environ.get("GOOGLE_API_KEY")
-        
-        if provider == "openai" and api_key:
+        print(f"provider: {provider}")
+        if "openai" in provider and api_key:
             self.llm = ChatOpenAI(
                 base_url=api_base, 
                 api_key=api_key, 
                 model=model_name,
                 max_tokens=16000
             )
-        elif provider == "google" and google_api_key:
+        elif "google" in provider and google_api_key:
             self.llm = ChatGoogleGenerativeAI(
                 model=model_name,
                 api_key=google_api_key,
@@ -1196,9 +1196,10 @@ ACTION: 最终回答
                 cmd = input("\n命令: ").strip()
                 
                 if cmd.lower() == 'quit':
-                    print("正在退出...")
                     should_exit = True
-                    break  # 立即退出循环
+                    import os
+                    os._exit(0)
+
                     
                 elif cmd.lower() == 'help':
                     print("\n可用命令:")

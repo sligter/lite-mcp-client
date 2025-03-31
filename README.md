@@ -67,13 +67,13 @@ uv run client.py --query "查询微博热点新闻并总结"
 uv run client.py "查询微博热点新闻并总结"
 
 # 调用特定工具
-uv run client.py --call "服务器名.工具名" --params '{"参数1": "值1"}'
+uv run client.py --call "服务器名.工具名" {"参数1": "值1"}
 
 # 获取资源
 uv run client.py --get "服务器名.资源URI"
 
 # 使用提示模板
-uv run client.py --prompt "服务器名.提示名" --params '{"参数1": "值1"}'
+uv run client.py --prompt "服务器名.提示名" {"参数1": "值1"}
 ```
 
 ### 配置文件

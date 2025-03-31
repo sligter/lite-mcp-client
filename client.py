@@ -11,6 +11,8 @@ from mcp.client.sse import sse_client
 
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_anthropic import ChatAnthropic
+from langchain_aws import ChatBedrockConverse
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from dotenv import load_dotenv
 import re
@@ -95,30 +97,62 @@ class ServerConnection:
         )
         
         try:
-            stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
+            # 创建独立的异步上下文，避免与其他连接共用
+            my_exit_stack = AsyncExitStack()
+            
+            # 使用专用上下文创建stdio客户端
+            stdio_transport = await my_exit_stack.enter_async_context(stdio_client(server_params))
             self.stdio, self.write = stdio_transport
             
             # 如果可能，尝试获取子进程引用
             if hasattr(self.stdio, '_process') and self.stdio._process:
                 self.subprocess = self.stdio._process
             
-            self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
+            # 创建会话
+            self.session = await my_exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
             
-            await self.session.initialize()
+            # 初始化会话，但添加超时
+            try:
+                await asyncio.wait_for(self.session.initialize(), timeout=5.0)
+            except asyncio.TimeoutError:
+                print(f"初始化会话超时，但将继续尝试")
+            
+            # 保存exit_stack
+            self.exit_stack = my_exit_stack
             
             # 尝试刷新服务器信息，但即使失败也继续
             try:
-                await self.refresh_server_info()
+                await asyncio.wait_for(self.refresh_server_info(), timeout=3.0)
             except Exception as e:
                 print(f"警告: 刷新服务器信息时出错: {str(e)}")
                 print("服务器连接已建立，但某些功能可能不可用")
-                self.connected = True
             
+            self.connected = True
             return True
         except Exception as e:
             print(f"连接到STDIO服务器失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            # 如果已创建资源，确保它们被清理
+            if hasattr(self, 'exit_stack') and self.exit_stack:
+                try:
+                    # 尝试安全关闭exit_stack
+                    await asyncio.wait_for(self.exit_stack.aclose(), timeout=1.0)
+                except Exception:
+                    pass  # 忽略清理过程中的异常
+                
+                self.exit_stack = AsyncExitStack()
+            
+            # 重置所有状态
+            self.session = None
+            self.stdio = None
+            self.write = None
+            self.subprocess = None
+            self.connected = False
+            
             return False
-        
+    
     async def _connect_sse(self) -> bool:
         """连接到SSE类型的服务器
         
@@ -324,76 +358,121 @@ class ServerConnection:
     async def cleanup(self):
         """清理服务器连接和相关资源"""
         try:
-            # 1. 取消所有后台任务
+            print(f"开始清理服务器 '{self.name}' 的连接...")
+            
+            # 首先将连接标记为断开，确保其他操作知道该连接已不可用
+            self.connected = False
+            
+            # 1. 捕获并清理子进程（最优先，避免孤立进程）
+            if self.subprocess:
+                try:
+                    print(f"正在终止子进程: {self.subprocess.pid}")
+                    if sys.platform == 'win32':
+                        # Windows系统下使用taskkill，但避免等待其完成
+                        import subprocess
+                        try:
+                            # 使用单独的进程执行taskkill，避免阻塞当前进程
+                            subprocess.Popen(
+                                ['taskkill', '/F', '/T', '/PID', str(self.subprocess.pid)],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                creationflags=subprocess.CREATE_NO_WINDOW
+                            )
+                        except Exception as e:
+                            print(f"启动taskkill进程失败: {e}")
+                    else:
+                        # Unix平台直接发送SIGKILL信号
+                        try:
+                            import signal
+                            os.kill(self.subprocess.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass  # 进程已不存在
+                        except Exception as e:
+                            print(f"发送SIGKILL失败: {e}")
+                except Exception as e:
+                    print(f"终止子进程时出错: {str(e)}")
+                
+                # 无需等待子进程结束，直接重置引用
+                self.subprocess = None
+            
+            # 2. 取消所有后台任务（使用更安全的方式）
+            remaining_tasks = set()
             for task in self.background_tasks:
                 if not task.done():
                     task.cancel()
+                    remaining_tasks.add(task)
             
-            # 等待所有任务完成取消，但设置超时
-            if self.background_tasks:
+            # 只给任务取消一个非常短的时间
+            if remaining_tasks:
                 try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*self.background_tasks, return_exceptions=True), 
-                        timeout=1.0
+                    # 极短的超时，如果任务无法快速取消，直接放弃等待
+                    done, pending = await asyncio.wait(
+                        remaining_tasks, 
+                        timeout=0.3, 
+                        return_when=asyncio.ALL_COMPLETED
                     )
-                except asyncio.TimeoutError:
-                    print(f"取消服务器 '{self.name}' 的后台任务超时")
+                    if pending:
+                        print(f"有 {len(pending)} 个任务未能及时取消，但将继续清理")
+                except Exception as e:
+                    print(f"等待任务取消时出错: {str(e)}")
             
             self.background_tasks.clear()
             
-            # 2. 如果有子进程，直接终止它（在关闭会话之前）
-            if self.subprocess:
-                try:
-                    print(f"正在强制终止子进程: {self.subprocess.pid}")
-                    if sys.platform == 'win32':
-                        # Windows平台使用特定方法
-                        import subprocess
-                        subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.subprocess.pid)], 
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    else:
-                        # Unix平台
-                        import signal
-                        os.kill(self.subprocess.pid, signal.SIGKILL)
-                    
-                    # 给进程一点时间终止
-                    await asyncio.sleep(0.5)
-                except Exception as e:
-                    print(f"终止子进程时出错: {str(e)}")
-                self.subprocess = None
-            
-            # 3. 清理会话和连接
+            # 3. 尝试关闭会话，但不等待它完成
             if self.session:
-                # 尝试直接关闭会话而不使用exit_stack
-                if hasattr(self.session, 'close') and callable(self.session.close):
-                    try:
-                        await self.session.close()
-                    except Exception as e:
-                        print(f"关闭会话时出错: {str(e)}")
-                    
-                # 重置状态
+                # 重置会话状态，优先切断引用
+                session = self.session
                 self.session = None
                 self.stdio = None
                 self.write = None
+                
+                # 然后尝试关闭，但不要等待太久
+                if hasattr(session, 'close') and callable(session.close):
+                    try:
+                        # 创建关闭任务，但设置很短的超时
+                        await asyncio.wait_for(session.close(), timeout=0.5)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        print(f"关闭会话超时")
+                    except Exception as e:
+                        print(f"关闭会话时出错: {str(e)}")
             
-            # 4. 安全关闭exit_stack - 使用try/except捕获所有异常
+            # 4. 重新创建exit_stack而不是尝试关闭现有的
+            # 这样可以避免遇到"Attempted to exit cancel scope in a different task"错误
             try:
-                # 创建一个超时任务来关闭exit_stack
-                try:
-                    await asyncio.wait_for(self.exit_stack.aclose(), timeout=2.0)
-                except (asyncio.TimeoutError, RuntimeError) as e:
-                    print(f"关闭exit_stack超时或遇到运行时错误: {str(e)}")
-                except Exception as e:
-                    print(f"关闭exit_stack时出错: {str(e)}")
-            finally:
-                # 无论如何都重置exit_stack
+                # 保存引用以便重置
+                old_stack = self.exit_stack
+                # 立即创建新的exit_stack并重置引用
                 self.exit_stack = AsyncExitStack()
                 
-            self.connected = False
+                # 尝试关闭旧的exit_stack，但不要等待太久
+                try:
+                    await asyncio.wait_for(old_stack.aclose(), timeout=0.5)
+                except (asyncio.TimeoutError, asyncio.CancelledError, RuntimeError):
+                    # 忽略所有异常，包括"不同任务"的RuntimeError
+                    pass
+                except Exception as e:
+                    print(f"关闭exit_stack时出错 (已忽略): {str(e)}")
+            except Exception:
+                # 确保即使出现任何问题，也会重置exit_stack
+                self.exit_stack = AsyncExitStack()
+                
             print(f"已断开与服务器 '{self.name}' 的连接")
+            return True
         except Exception as e:
             print(f"清理服务器 '{self.name}' 连接时出错: {str(e)}")
+            # 确保连接标记为断开
+            self.connected = False
+            # 确保重置关键属性
+            self.session = None
+            self.stdio = None
+            self.write = None
+            self.subprocess = None
+            self.exit_stack = AsyncExitStack()
+            self.background_tasks.clear()
+            
             import traceback
             traceback.print_exc()
+            return False
 
 
 class GenericMCPClient:
@@ -411,6 +490,11 @@ class GenericMCPClient:
         api_key = os.environ.get("OPENAI_API_KEY")
         provider = os.environ.get("PROVIDER", "openai")
         google_api_key = os.environ.get("GOOGLE_API_KEY")
+        anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        anthropic_api_base = os.environ.get("ANTHROPIC_API_BASE")
+        aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID")
+        aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+        aws_session_token = os.environ.get("AWS_SESSION_TOKEN")
         print(f"provider: {provider}")
         if "openai" in provider and api_key:
             self.llm = ChatOpenAI(
@@ -427,7 +511,26 @@ class GenericMCPClient:
                 timeout=None,
                 max_retries=2,
             )
-        else:
+        elif "anthropic" in provider and anthropic_api_key:
+            self.llm = ChatAnthropic(
+                base_url=anthropic_api_base,
+                api_key=anthropic_api_key,
+                model=model_name,
+                max_tokens_to_sample=128000,
+                max_retries=2,
+            )
+        elif "aws" in provider and aws_access_key_id and aws_secret_access_key:
+            self.llm = ChatBedrockConverse(
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                aws_session_token=aws_session_token,
+                region_name="us-east-1",
+                model=model_name,
+                max_tokens=128000,
+                timeout=None,
+                temperature=1.0,
+                max_retries=2,
+            )
             print("警告: 未找到有效的API密钥，智能查询功能将不可用")
             print("请在.env文件中设置OPENAI_API_KEY或GOOGLE_API_KEY")
             self.llm = None
@@ -529,7 +632,7 @@ class GenericMCPClient:
                 print(f"\n默认服务器: {default}")
 
     async def connect_to_server_by_name(self, server_name: str, config: Dict) -> bool:
-        """根据名称连接到指定的服务器
+        """通过名称连接到服务器
         
         Args:
             server_name: 服务器名称
@@ -538,12 +641,31 @@ class GenericMCPClient:
         Returns:
             连接是否成功
         """
-        servers = config.get('mcp_servers', [])
-        for server in servers:
-            if server.get('name') == server_name:
-                return await self.connect_to_server_config(server)
-                
-        raise ValueError(f"在配置中未找到名为 '{server_name}' 的服务器")
+        # 查找服务器配置
+        server = None
+        for srv in config.get('mcp_servers', []):
+            if srv.get('name') == server_name:
+                server = srv
+                break
+            
+        if not server:
+            print(f"找不到服务器 '{server_name}' 的配置")
+            return False
+        
+        # 检查是否已经连接该服务器，如果是则直接切换
+        if server_name in self.connections and self.connections[server_name].connected:
+            print(f"已连接到服务器 '{server_name}'，正在切换...")
+            self.current_connection = self.connections[server_name]
+            return True
+        
+        # 如果已有连接但标记为断开，先清理它
+        if server_name in self.connections and not self.connections[server_name].connected:
+            print(f"发现未连接的服务器 '{server_name}'，将重新连接...")
+            del self.connections[server_name]
+        
+        # 创建并连接到服务器
+        print(f"正在连接到服务器 '{server_name}'...")
+        return await self.connect_to_server_config(server)
     
     async def connect_to_server_config(self, server_config: Dict) -> bool:
         """根据配置连接到服务器
@@ -564,17 +686,36 @@ class GenericMCPClient:
             self.current_connection = self.connections[server_name]
             self.server_config = server_config
             return True
-            
-        # 创建新连接
-        connection = ServerConnection(server_config)
-        if await connection.connect():
-            self.connections[server_name] = connection
-            self.current_connection = connection
-            self.server_config = server_config
-            return True
         
-        return False
-    
+        # 如果已有同名但未连接的服务器，先移除它
+        if server_name in self.connections:
+            print(f"发现同名但未连接的服务器 '{server_name}'，将先移除它")
+            del self.connections[server_name]
+            
+        # 创建新连接 - 改用try/except确保异常被捕获
+        try:
+            # 创建连接对象
+            connection = ServerConnection(server_config)
+            
+            # 尝试连接
+            connect_success = await connection.connect()
+            if connect_success:
+                # 连接成功后才添加到连接列表中，并设为当前连接
+                self.connections[server_name] = connection
+                self.current_connection = connection
+                self.server_config = server_config
+                return True
+            else:
+                # 连接失败，确保资源被清理
+                await connection.cleanup()
+                print(f"无法连接到服务器 '{server_name}'")
+                return False
+        except Exception as e:
+            print(f"连接到服务器 '{server_name}' 时发生异常: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     async def disconnect_server(self, server_name: str) -> bool:
         """断开与指定服务器的连接
         
@@ -599,11 +740,21 @@ class GenericMCPClient:
         del self.connections[server_name]
         
         try:
-            await connection.cleanup()
+            # 添加超时限制，防止无限期挂起
+            result = await asyncio.wait_for(connection.cleanup(), timeout=2.0)
+            # 等待短暂时间，确保任何后台任务或子进程都有机会终止
+            await asyncio.sleep(0.1)
             return True
+        except asyncio.TimeoutError:
+            print(f"断开服务器 '{server_name}' 连接超时，但连接已标记为断开")
+            # 即使超时，连接清理函数也应该将内部状态设置为断开
+            return True
+        except asyncio.CancelledError:
+            print(f"断开服务器 '{server_name}' 操作被取消")
+            return False
         except Exception as e:
             print(f"断开服务器 '{server_name}' 连接时出错: {str(e)}")
-            return False
+            return True  # 即使有错误，连接也已经从列表中移除，可以认为断开成功
         
     async def switch_connection(self, server_name: str) -> bool:
         """切换到另一个已连接的服务器
@@ -1225,16 +1376,46 @@ ACTION: 最终回答
                     
                 elif cmd.lower().startswith('connect '):
                     server_name = cmd[8:].strip()
-                    config = self.load_server_config()
-                    await self.connect_to_server_by_name(server_name, config)
+                    try:
+                        # 先保存当前连接，以便连接失败时恢复
+                        old_current = self.current_connection
+                        
+                        config = self.load_server_config()
+                        connect_success = await self.connect_to_server_by_name(server_name, config)
+                        
+                        if connect_success:
+                            print(f"成功连接到服务器 '{server_name}'")
+                            
+                            # 显示服务器信息
+                            if self.current_connection and self.current_connection.connected:
+                                tools_count = len(self.current_connection.tools_cache)
+                                has_resources = "可用" if self.current_connection.resources_cache else "不可用"
+                                prompts_count = len(self.current_connection.prompts_cache)
+                                print(f"已连接到服务器 '{server_name}'，发现 {tools_count} 个工具, 资源列表{has_resources}, {prompts_count} 个提示模板")
+                        else:
+                            # 恢复旧的当前连接
+                            self.current_connection = old_current
+                            print(f"无法连接到服务器 '{server_name}'")
+                    except Exception as e:
+                        print(f"连接到服务器 '{server_name}' 时出错: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
                 
                 elif cmd.lower() == 'connect-all':
-                    config = self.load_server_config()
-                    await self.connect_all_default_servers(config)
+                    try:
+                        config = self.load_server_config()
+                        await self.connect_all_default_servers(config)
+                    except Exception as e:
+                        print(f"连接到默认服务器时出错: {str(e)}")
                 
                 elif cmd.lower().startswith('disconnect '):
                     server_name = cmd[11:].strip()
-                    await self.disconnect_server(server_name)
+                    try:
+                        disconnect_success = await self.disconnect_server(server_name)
+                        if not disconnect_success:
+                            print(f"断开服务器 '{server_name}' 连接失败")
+                    except Exception as e:
+                        print(f"断开服务器 '{server_name}' 连接时出错: {str(e)}")
                 
                 elif cmd.lower().startswith('switch '):
                     server_name = cmd[7:].strip()
@@ -1504,34 +1685,56 @@ ACTION: 最终回答
         return True
     
     async def connect_all_default_servers(self, config: Dict) -> bool:
-        """连接到配置中的所有默认服务器
+        """连接到所有默认服务器
         
         Args:
             config: 配置字典
             
         Returns:
-            是否至少有一个服务器成功连接
+            是否至少成功连接一个服务器
         """
-        default_servers = config.get('default_server')
+        connected = False
         
-        # 检查default_server是否存在
-        if not default_servers:
-            print("配置中未找到默认服务器")
+        # 获取默认服务器列表 - 支持顶级default_server配置
+        default_server_names = config.get('default_server', [])
+        
+        # 处理可能的字符串情况
+        if isinstance(default_server_names, str):
+            default_server_names = [default_server_names]
+        
+        if not default_server_names:
+            print("配置中没有默认服务器")
             return False
             
-        # 处理default_server可能是字符串或列表的情况
-        if isinstance(default_servers, str):
-            default_servers = [default_servers]
-        
-        # 尝试连接到所有默认服务器
-        connected = False
-        for server_name in default_servers:
+        # 逐个连接默认服务器
+        for server_name in default_server_names:
             print(f"正在连接到默认服务器: {server_name}")
+            
             try:
-                if await self.connect_to_server_by_name(server_name, config):
+                # 查找服务器配置
+                server_config = None
+                for server in config.get('mcp_servers', []):
+                    if server.get('name') == server_name:
+                        server_config = server
+                        break
+                        
+                if not server_config:
+                    print(f"找不到服务器 '{server_name}' 的配置")
+                    continue
+                    
+                # 尝试连接，但捕获所有异常
+                success = await self.connect_to_server_config(server_config)
+                
+                if success:
                     connected = True
+                    print(f"成功连接到默认服务器: {server_name}")
+                else:
+                    print(f"无法连接到默认服务器: {server_name}")
+                    
             except Exception as e:
-                print(f"连接到服务器 '{server_name}' 时出错: {str(e)}")
+                print(f"连接到默认服务器 '{server_name}' 时出错: {str(e)}")
+                import traceback
+                traceback.print_exc()
         
         if not connected:
             print("无法连接到任何默认服务器")
@@ -1683,29 +1886,35 @@ async def main():
         # 确保连接被清理
         print("正在清理连接和资源...")
         try:
-            await asyncio.wait_for(client.cleanup(), timeout=5.0)
+            # 仅给清理程序较短的时间，避免卡住
+            cleanup_task = asyncio.create_task(client.cleanup())
+            await asyncio.wait_for(cleanup_task, timeout=3.0)
         except asyncio.TimeoutError:
-            print("清理连接超时，强制退出")
+            print("清理连接超时，忽略并继续执行")
         except Exception as e:
             print(f"清理连接时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
         
-        # 强制退出剩余的后台任务
+        # 立即取消所有任务而不是等待它们
+        print("正在终止所有剩余任务...")
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        
+        # 非常短的等待时间
         if tasks:
-            print(f"强制取消 {len(tasks)} 个剩余任务...")
-            for task in tasks:
-                task.cancel()
-            
-            # 等待所有任务完成取消，但设置超时
             try:
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=2.0)
+                await asyncio.wait(tasks, timeout=0.5)
                 print("所有任务已取消")
-            except asyncio.TimeoutError:
-                print("任务取消超时，强制退出")
-            except Exception as e:
-                print(f"取消任务时出错: {str(e)}")
+            except Exception:
+                print("任务取消中出现错误，强制退出")
                 
-    print("程序终止")
+        # 在某些情况下可能需要强制退出
+        print("程序终止")
+        import os, sys
+        # 使用os._exit强制退出，确保不会卡住
+        os._exit(0)
 
 
 

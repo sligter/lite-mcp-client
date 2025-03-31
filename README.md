@@ -31,7 +31,7 @@ Lite-MCP-Client是一个基于命令行的轻量级MCP客户端工具，可以�
 1. 克隆仓库到本地：
 
 ```bash
-git clone https://github.com/yourusername/mcp-client.git
+git clone https://github.com/sligter/lite-mcp-client.git
 cd mcp-client
 ```
 

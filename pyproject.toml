@@ -11,3 +11,6 @@ dependencies = [
     "langchain-openai>=0.3.11",
     "mcp>=1.6.0",
 ]
+
+[project.scripts]
+lite-mcp-client = "lite_mcp_client.main:entry_point"

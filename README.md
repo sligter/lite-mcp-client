@@ -2,7 +2,7 @@
 
 ## 📝 项目介绍
 
-Lite-MCP-Client是一个基于命令行的轻量级MCP客户端工具，可以连接到多种MCP（Model-Chat-Prompt）服务器，帮助用户轻松调用服务器提供的工具、资源和提示模板。该客户端支持与大型语言模型（如OpenAI的GPT和Google的Gemini）集成，实现智能化查询和处理。
+Lite-MCP-Client是一个基于命令行的轻量级MCP客户端工具，可以连接到多种MCP（Model-Chat-Prompt）服务器，帮助用户轻松调用服务器提供的工具、资源和提示模板。该客户端支持与大型语言模型集成，实现智能化查询和处理。
 
 ![image](https://img.pub/p/a217fd508f77b65ac7bb.png)
 
@@ -23,28 +23,36 @@ Lite-MCP-Client是一个基于命令行的轻量级MCP客户端工具，可以�
 
 ### 前提条件
 
-- Python 3.10+
-- uv
+- Python 3.11+
+- pip 或 uv 包管理器
 
-### 安装步骤
+### 安装方式
 
-1. 克隆仓库到本地：
+#### 方式一：从PyPI安装
 
 ```bash
-git clone https://github.com/yourusername/mcp-client.git
-cd mcp-client
+# 使用pip安装
+pip install lite-mcp-client
+
+# 或使用uv安装
+uv pip install lite-mcp-client
 ```
 
-2. 安装依赖：
+#### 方式二：从源代码安装
 
 ```bash
+# 克隆仓库
+git clone https://github.com/sligter/lite-mcp-client
+cd lite-mcp-client
+
+# 使用uv安装依赖
 uv sync
-```
-
-3. 配置环境变量：
-
 
 ```
+
+### 配置环境变量
+
+```bash
 cp .env.example .env
 ```
 
@@ -52,9 +60,43 @@ cp .env.example .env
 
 ### 基本使用
 
+#### 使用pip安装后的命令行工具
+
+```bash
+# 启动交互式模式
+lite-mcp-client --interactive
+
+# 使用特定服务器
+lite-mcp-client --server "服务器名称"
+
+# 连接所有默认服务器
+lite-mcp-client --connect-all
+
+# 执行智能查询
+lite-mcp-client --query "查询微博热点新闻并总结"
+# 或者直接
+lite-mcp-client "查询微博热点新闻并总结"
+
+# 调用特定工具
+lite-mcp-client --call "服务器名.工具名" --params '{"参数1": "值1"}'
+
+# 获取资源
+lite-mcp-client --get "服务器名.资源URI"
+
+# 使用提示模板
+lite-mcp-client --prompt "服务器名.提示名" --params '{"参数1": "值1"}'
+
+# 执行操作后显示结果并保持交互模式
+lite-mcp-client --query "获取微博热搜" --interactive
+```
+
+#### 从源码直接运行
+
 ```bash
 # 启动交互式模式
 uv run lite_mcp_client.main --interactive
+# 或
+python -m lite_mcp_client.main --interactive
 
 # 使用特定服务器
 uv run lite_mcp_client.main --server "服务器名称"
@@ -62,7 +104,7 @@ uv run lite_mcp_client.main --server "服务器名称"
 # 连接所有默认服务器
 uv run lite_mcp_client.main --connect-all
 
-# 执行智能查询（两种等价方式）
+# 执行智能查询
 uv run lite_mcp_client.main --query "查询微博热点新闻并总结"
 # 或者直接
 uv run lite_mcp_client.main "查询微博热点新闻并总结"
@@ -83,17 +125,14 @@ uv run lite_mcp_client.main --query "获取微博热搜" --interactive
 ### 高级使用
 
 ```bash
-# 执行复杂任务，自动选择工具
-uv run lite_mcp_client.main "获取今日科技新闻，并分析其中的AI相关内容，最后生成一份摘要报告"
+# 执行复杂任务，自动选择工具（使用安装版）
+lite-mcp-client "获取今日科技新闻，并分析其中的AI相关内容，最后生成一份摘要报告"
 
 # 使用配置文件
-uv run lite_mcp_client.main --config custom_config.json --query "分析最新数据"
-
-# 批处理方式
-echo "查询微博热搜" | uv run lite_mcp_client.main
+lite-mcp-client --config custom_config.json --query "分析最新数据"
 
 # 结果重定向
-uv run lite_mcp_client.main --get "Fetch.webpage" --params '{"url": "https://example.com"}' > webpage.html
+lite-mcp-client --get "Fetch.webpage" --params '{"url": "https://example.com"}' > webpage.html
 ```
 
 ### 配置文件
@@ -154,31 +193,7 @@ uv run lite_mcp_client.main --get "Fetch.webpage" --params '{"url": "https://exa
 - `help` - 显示帮助信息
 - `quit / exit` - 退出程序
 
-## 🌟 实际应用示例
 
-### 智能新闻聚合
-
-```bash
-uv run lite_mcp_client.main "获取今天的热门新闻并按主题分类"
-```
-
-### 多服务端协作
-
-```bash
-uv run lite_mcp_client.main "先从财经服务获取股市数据，然后使用AI分析服务生成投资建议"
-```
-
-### 自动化内容获取
-
-```bash
-uv run lite_mcp_client.main --get "Fetch.webpage" --params '{"url": "https://example.com"}'
-```
-
-### 个性化内容生成
-
-```bash
-uv run lite_mcp_client.main --prompt "内容生成.文章" --params '{"主题": "人工智能", "风格": "科普"}'
-```
 
 ## 🔧 高级配置
 
@@ -204,28 +219,10 @@ uv run lite_mcp_client.main --prompt "内容生成.文章" --params '{"主题": 
 - `langchain_anthropic`: Anthropic Claude模型集成
 - `langchain_aws`: AWS Bedrock模型集成
 - `dotenv`: 环境变量管理
-- `json`: JSON数据处理
-
-## 🤝 贡献指南
-
-欢迎提交问题报告和功能请求！如果您想贡献代码：
-
-1. Fork此仓库
-2. 创建您的特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交您的更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建一个Pull Request
+- `json`: JSON数据处理：
 
 ## 📄 许可证
 
 此项目采用MIT许可证 - 详情请参阅 [LICENSE](LICENSE) 文件。
-
-## 🙏 致谢
-
-- 感谢所有MCP协议的贡献者
-- 感谢语言模型提供商的API支持
-- 感谢开源社区的支持和贡献
-
----
 
 *注：本客户端仅提供与MCP服务的接口，具体功能取决于所连接服务器提供的工具和资源。*

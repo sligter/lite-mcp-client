@@ -266,21 +266,10 @@ async def main():
         os._exit(exit_code)
 
 
-def run():
-    """程序入口点函数"""
-    # Standard asyncio run
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-         # This might catch the KeyboardInterrupt before main's finally block
-         print("\n程序被中断 (asyncio.run)")
-    except Exception as final_err:
-         # Catch errors occurring directly within asyncio.run setup/teardown
-         print(f"\nAsyncio 运行期间发生顶层错误: {final_err}")
-         import traceback
-         traceback.print_exc()
-         sys.exit(1) # Force exit on top-level async error
+def entry_point():
+    import asyncio
+    return asyncio.run(main())
 
 
 if __name__ == "__main__":
-    run() 
+    entry_point() 

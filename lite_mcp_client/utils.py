@@ -48,23 +48,28 @@ def clean_json_string(text: str) -> str:
     
     return text
 
-def parse_server_and_name(spec: str, default_server: Optional[str] = None) -> Tuple[str, str]:
-    """解析格式为'server.name'的字符串
+def parse_server_and_name(spec: str, client=None) -> Tuple[str, str]:
+    """解析服务器名和工具/提示/资源名
     
     Args:
-        spec: 格式为'server.name'的字符串
-        default_server: 如果未指定服务器时的默认值
+        spec: 格式为 "服务器名.名称" 或仅 "名称" 的字符串
+        client: 客户端实例，用于获取当前连接
         
     Returns:
-        (服务器名, 名称)的元组
+        包含服务器名和名称的元组
+        
+    Raises:
+        ValueError: 如果格式无效或缺少当前连接
     """
     if '.' in spec:
+        # 如果提供了完整的 "服务器名.名称" 格式
         server_name, name = spec.split('.', 1)
         return server_name, name
-    elif default_server:
-        return default_server, spec
     else:
-        raise ValueError(f"无法解析 '{spec}'，格式应为 'server.name'，且无默认服务器")
+        # 如果只提供了名称，使用当前连接的服务器
+        if client is None or client.current_connection is None:
+            raise ValueError("未指定服务器名，且没有活动的服务器连接。请使用 '服务器名.名称' 格式或先切换到一个活动服务器。")
+        return client.current_connection.name, spec
 
 def format_tool_help(tool_info: Dict) -> str:
     """格式化工具帮助信息
@@ -104,13 +109,16 @@ def print_help_message():
     print("  disconnect <服务器名>    - 断开与指定服务器的连接并清理资源")
     print("  switch <服务器名>        - 切换当前活动的服务器连接")
     print("  connections (conn)      - 列出所有当前连接及其状态")
-    print("  tools                   - 列出所有已连接服务器的可用工具")
-    print("  resources (res)         - 列出所有已连接服务器的可用资源")
-    print("  prompts                 - 列出所有已连接服务器的可用提示模板")
-    print("  call <srv.tool> [params] - 调用指定服务器上的工具 (params为JSON)")
+    print("  tools [服务器名]         - 列出所有或指定服务器的可用工具")
+    print("  resources (res) [服务器名] - 列出所有或指定服务器的可用资源")
+    print("  prompts [服务器名]       - 列出所有或指定服务器的可用提示模板")
+    print("  call <srv.tool> [参数]   - 调用指定服务器上的工具")
+    print("  call <tool> [参数]       - 调用当前服务器上的工具")
     print("  get <srv.uri>           - 获取指定服务器上的资源")
-    print("  prompt <srv.prompt> [params] - 使用指定服务器上的提示模板 (params为JSON)")
+    print("  get <uri>               - 获取当前服务器上的资源")
+    print("  prompt <srv.prompt> [参数] - 使用指定服务器上的提示模板")
+    print("  prompt <prompt> [参数]   - 使用当前服务器上的提示模板")
     print("  ask <自然语言问题>        - LLM处理提问，自动选择并调用工具")
-    print("  clear-history           - 清除 'ask' 命令的对话历史记录")
+    print("  clear-history (clh)      - 清除 'ask' 命令的对话历史记录")
     print("  help                    - 显示此帮助信息")
     print("  quit / exit             - 退出程序") 

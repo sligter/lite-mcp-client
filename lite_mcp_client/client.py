@@ -557,4 +557,113 @@ class GenericMCPClient:
     async def interactive_mode(self):
         """交互式命令行模式"""
         from .cli import run_interactive_cli
-        await run_interactive_cli(self) 
+        await run_interactive_cli(self)
+
+    def list_server_tools(self, server_name: str):
+        """列出指定服务器的可用工具
+        
+        Args:
+            server_name: 服务器名称
+        """
+        if server_name not in self.connections:
+            print(f"错误: 未连接到服务器 '{server_name}'")
+            return
+        
+        connection = self.connections[server_name]
+        if not connection.connected:
+            print(f"警告: 服务器 '{server_name}' 连接已断开")
+            return
+        
+        tools = connection.tools_cache
+        if not tools:
+            print(f"服务器 '{server_name}' 没有可用的工具")
+            return
+        
+        print(f"\n{server_name} 可用工具:")
+        for tool in tools:
+            name = tool.get("name", "未知工具")
+            description = tool.get("description", "无描述")
+            print(f"- {name}: {description}")
+            
+            # 显示参数信息
+            schema = tool.get("schema", {})
+            if isinstance(schema, dict) and "properties" in schema:
+                properties = schema.get("properties", {})
+                required = schema.get("required", [])
+                
+                if properties:
+                    print("  参数:")
+                    for param_name, param_info in properties.items():
+                        param_type = param_info.get("type", "any")
+                        param_desc = param_info.get("description", "")
+                        req_marker = "*" if param_name in required else ""
+                        
+                        print(f"  - {param_name}{req_marker} ({param_type}): {param_desc}")
+
+    def list_server_resources(self, server_name: str):
+        """列出指定服务器的可用资源
+        
+        Args:
+            server_name: 服务器名称
+        """
+        if server_name not in self.connections:
+            print(f"错误: 未连接到服务器 '{server_name}'")
+            return
+        
+        connection = self.connections[server_name]
+        if not connection.connected:
+            print(f"警告: 服务器 '{server_name}' 连接已断开")
+            return
+        
+        resources = connection.resources_cache
+        if not resources:
+            print(f"服务器 '{server_name}' 没有可用的资源")
+            return
+        
+        print(f"\n{server_name} 可用资源:")
+        for resource in resources:
+            uri = resource.get("uri", "未知资源")
+            content_type = resource.get("contentType", "未知类型")
+            description = resource.get("description", "无描述")
+            print(f"- {uri} ({content_type}): {description}")
+
+    def list_server_prompts(self, server_name: str):
+        """列出指定服务器的可用提示模板
+        
+        Args:
+            server_name: 服务器名称
+        """
+        if server_name not in self.connections:
+            print(f"错误: 未连接到服务器 '{server_name}'")
+            return
+        
+        connection = self.connections[server_name]
+        if not connection.connected:
+            print(f"警告: 服务器 '{server_name}' 连接已断开")
+            return
+        
+        prompts = connection.prompts_cache
+        if not prompts:
+            print(f"服务器 '{server_name}' 没有可用的提示模板")
+            return
+        
+        print(f"\n{server_name} 可用提示模板:")
+        for prompt in prompts:
+            name = prompt.get("name", "未知提示模板")
+            description = prompt.get("description", "无描述")
+            print(f"- {name}: {description}")
+            
+            # 显示参数信息
+            schema = prompt.get("schema", {})
+            if isinstance(schema, dict) and "properties" in schema:
+                properties = schema.get("properties", {})
+                required = schema.get("required", [])
+                
+                if properties:
+                    print("  参数:")
+                    for param_name, param_info in properties.items():
+                        param_type = param_info.get("type", "any")
+                        param_desc = param_info.get("description", "")
+                        req_marker = "*" if param_name in required else ""
+                        
+                        print(f"  - {param_name}{req_marker} ({param_type}): {param_desc}") 

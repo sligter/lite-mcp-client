@@ -111,26 +111,53 @@ async def process_command(client, command: str, args: List[str], raw_input: str)
         
     # 列出工具
     elif command == "tools":
-        client.list_all_tools()
+        if not args:
+            # 列出所有服务器的工具
+            client.list_all_tools()
+        else:
+            # 列出指定服务器的工具
+            server_name = args[0]
+            if server_name in client.connections:
+                client.list_server_tools(server_name)
+            else:
+                print(f"错误: 未连接到服务器 '{server_name}'。可用连接: {list(client.connections.keys())}")
         
     # 列出资源
     elif command in ["resources", "res"]:
-        client.list_all_resources()
+        if not args:
+            # 列出所有服务器的资源
+            client.list_all_resources()
+        else:
+            # 列出指定服务器的资源
+            server_name = args[0]
+            if server_name in client.connections:
+                client.list_server_resources(server_name)
+            else:
+                print(f"错误: 未连接到服务器 '{server_name}'。可用连接: {list(client.connections.keys())}")
         
     # 列出提示模板
     elif command == "prompts":
-        client.list_all_prompts()
+        if not args:
+            # 列出所有服务器的提示模板
+            client.list_all_prompts()
+        else:
+            # 列出指定服务器的提示模板
+            server_name = args[0]
+            if server_name in client.connections:
+                client.list_server_prompts(server_name)
+            else:
+                print(f"错误: 未连接到服务器 '{server_name}'。可用连接: {list(client.connections.keys())}")
         
     # 调用工具
     elif command == "call":
         if not args:
             print("错误: 请指定工具。")
-            print("用法: call <服务器名.工具名> [JSON参数]")
+            print("用法: call <服务器名.工具名> 或 call <工具名> [JSON参数]")
             return
             
         # 解析工具规格
         try:
-            server_name, tool_name = parse_server_and_name(args[0])
+            server_name, tool_name = parse_server_and_name(args[0], client)
         except ValueError as e:
             print(f"错误: {str(e)}")
             return
@@ -157,12 +184,12 @@ async def process_command(client, command: str, args: List[str], raw_input: str)
     elif command == "get":
         if not args:
             print("错误: 请指定资源URI。")
-            print("用法: get <服务器名.资源URI>")
+            print("用法: get <服务器名.资源URI> 或 get <资源URI>")
             return
             
         # 解析资源规格
         try:
-            server_name, resource_uri = parse_server_and_name(args[0])
+            server_name, resource_uri = parse_server_and_name(args[0], client)
         except ValueError as e:
             print(f"错误: {str(e)}")
             return
@@ -181,12 +208,12 @@ async def process_command(client, command: str, args: List[str], raw_input: str)
     elif command == "prompt":
         if not args:
             print("错误: 请指定提示模板。")
-            print("用法: prompt <服务器名.提示名> [JSON参数]")
+            print("用法: prompt <服务器名.提示名> 或 prompt <提示名> [JSON参数]")
             return
             
         # 解析提示规格
         try:
-            server_name, prompt_name = parse_server_and_name(args[0])
+            server_name, prompt_name = parse_server_and_name(args[0], client)
         except ValueError as e:
             print(f"错误: {str(e)}")
             return
@@ -226,7 +253,7 @@ async def process_command(client, command: str, args: List[str], raw_input: str)
             print(f"处理回答失败: {str(e)}")
             
     # 清除对话历史
-    elif command == "clear-history":
+    elif command in ["clear-history", "clh"]:
         client.llm_processor.clear_history()
         
     # 未知命令

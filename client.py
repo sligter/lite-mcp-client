@@ -2313,8 +2313,6 @@ class GenericMCPClient:
 
                 # 如果仍然没有有效JSON
                 if not json_data:
-                    # 最后尝试使用紧急解析
-                    print("尝试使用紧急JSON解析方法...")
                     json_data = self._emergency_parse_json(llm_content)
                     
                     if not json_data:
@@ -2324,7 +2322,7 @@ class GenericMCPClient:
                             "raw_response": llm_content
                         }
                     else:
-                        print(f"紧急JSON解析成功: {json_data}")
+                        print(f"JSON解析成功: {json_data}")
 
                 tool_spec = json_data.get("tool")
                 params = json_data.get("params", {})
@@ -2371,7 +2369,6 @@ class GenericMCPClient:
                     }
 
                 if not json_data:
-                    # 尝试更强力的JSON修复
                     try:
                         # 查找ACTION后的第一个{和最后一个}之间的内容
                         json_start = llm_content.find('{', llm_content.find('ACTION'))
@@ -2631,8 +2628,7 @@ async def main():
              # Default behavior: connect to defaults if no action/interactive specified
              print("未指定操作，尝试连接默认服务器...")
              initial_connection_made = await client.connect_all_default_servers(config)
-        # Note: If an action like --query is given without --server/--connect-all,
-        # the action execution part below will handle connection if needed.
+
 
         # --- Action Execution (if not forced interactive) ---
         action_performed = False
@@ -2651,13 +2647,6 @@ async def main():
                      result = await client.smart_query(query_to_run)
                      print("\n回答结果:")
                      print(result)
-                     # Optionally write to file
-                     # try:
-                     #     with open('query_result.txt', 'w', encoding='utf-8') as f:
-                     #         f.write(result)
-                     #     print("\n结果已写入 query_result.txt")
-                     # except Exception as write_err:
-                     #     print(f"\n写入结果文件失败: {write_err}")
 
 
             elif args.call:
